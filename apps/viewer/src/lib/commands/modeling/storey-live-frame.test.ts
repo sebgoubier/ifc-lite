@@ -62,12 +62,20 @@ test('#7306 identical source ids in two models retain model-local current placem
  const active=buildStoreyWorkplane(useViewerStore.getState(),SAMPLE_MODEL,f.storey,0),other=buildStoreyWorkplane(useViewerStore.getState(),'other',f.storey,0);assert.ok(isWorkplane(active));assert.ok(isWorkplane(other));assert.deepEqual(active.localToRender([1,2,0]),[13,5,-21]);
  const legacy=other.localToRender([1,2,0]);for(let i=0;i<3;i++)assert.ok(Math.abs(legacy[i]-[4,0,-5][i])<1e-9,'Other native model retains original source frame');
 });
-test('#7306 over-256 live placement walk refuses and reports its bound without truncating a source frame',async()=>{
+test('#7306/#7825 over-256 acyclic live placement walk composes the complete saved frame',async()=>{
  const f=await editedFrame(),editor=new StoreEditor(f.source,f.view);let parent:number|null=null;
  for(let i=0;i<257;i++)parent=editor.addEntity('IfcLocalPlacement',[parent===null?null:`#${parent}`,`#${f.axis}`]).expressId;
  assert.ok(parent);editor.setPositionalAttribute(f.storey,5,`#${parent}`);
- const independent=await parseIfc(editedModelBytes(f.source,f.view));assert.ok(storeyPlanFrame(independent,f.storey),'Unbounded historical source-only API remains readable; current view refuses excessive work');
- const plane=buildStoreyWorkplane(useViewerStore.getState(),SAMPLE_MODEL,f.storey,0);assert.ok('refused' in plane);assert.match(plane.refused,/256/);
+ // #7825 removed depth caps: an iterative visited walk accepts any acyclic
+ // chain. 257 quarter-turns retain one turn; truncating to 256 yields identity.
+ const independent=await parseIfc(editedModelBytes(f.source,f.view)),saved=storeyPlanFrame(independent,f.storey);
+ assert.ok(saved);assert.deepEqual(saved.origin,[15,20]);assert.deepEqual(saved.axisX,[0,1]);
+ const state=useViewerStore.getState(),model=state.models.get(SAMPLE_MODEL)!;
+ const plane=buildStoreyWorkplane(state,SAMPLE_MODEL,f.storey,0);
+ const savedPlane=buildStoreyWorkplane({...state,models:new Map([[SAMPLE_MODEL,{...model,ifcDataStore:independent}]]),mutationViews:new Map()},SAMPLE_MODEL,f.storey,0);
+ assert.ok(isWorkplane(plane));assert.ok(isWorkplane(savedPlane));
+ assert.deepEqual(plane.localToRender([1,2,0]),[13,5,-21],'The complete 257-link chain must not be truncated to the identity frame');
+ assert.deepEqual(plane.localToRender([1,2,0]),savedPlane.localToRender([1,2,0]),'Current and independently saved full placement chains agree');
 });
 
 test('#7306 current frame reads preserve a held native preparation lease and follow Undo/Redo',async()=>{
