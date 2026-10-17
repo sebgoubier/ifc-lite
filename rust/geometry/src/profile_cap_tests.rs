@@ -279,7 +279,6 @@ fn issue_6940_cap_retry_preserves_outside_and_nested_ring_semantics() {
     };
     for holes in [
         vec![ring(20., 20., 2.)],
-        vec![ring(2., 2., 6.), ring(3., 3., 1.)],
         vec![ring(8., 8., 4.)],
     ] {
         let outer = ring(0., 0., 10.);
@@ -296,5 +295,18 @@ fn issue_6940_cap_retry_preserves_outside_and_nested_ring_semantics() {
             result.indices, old,
             "malformed domains must retain safe_earcut's interpretation"
         );
+    }
+
+    // #7787 deliberately refuses nested positive-area holes before earcut:
+    // the cap retry must preserve that current-main safety rejection too.
+    let outer = ring(0., 0., 10.);
+    let holes = [ring(2., 2., 6.), ring(3., 3., 1.)];
+    let data: Vec<f64> = outer.iter().chain(holes.iter().flatten()).flat_map(|p| [p.x, p.y]).collect();
+    let offsets = [outer.len(), outer.len() + holes[0].len()];
+    let expected = "profile holes overlap; refusing the cap (D3)";
+    assert_eq!(crate::triangulation::safe_earcut(&data, &offsets, 2).unwrap_err(), expected);
+    match super::triangulate_rings(&outer, &holes) {
+        Err(crate::Error::TriangulationError(message)) => assert_eq!(message, expected),
+        result => panic!("nested holes must preserve the canonical typed refusal: {result:?}"),
     }
 }
