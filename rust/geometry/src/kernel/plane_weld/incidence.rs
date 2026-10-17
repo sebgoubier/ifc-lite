@@ -75,6 +75,7 @@
 //!   row, so it is not done.
 
 use super::Face;
+use crate::kernel::budget::incidence_work as work;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Exact-position key. `+ 0.0` folds `-0.0` onto `0.0`, so two vertices that
@@ -97,8 +98,16 @@ fn in_band_of(a: &Face, b: &Face) -> bool {
 }
 
 /// In-band of each other over their whole extent.
+#[cfg(test)]
 fn coincide(a: &Face, b: &Face) -> bool {
     in_band_of(a, b) && in_band_of(b, a)
+}
+
+// Reserve the three possible vertex-plane checks before entering the exact
+// original short-circuit predicate. Unused reserved units are not refunded.
+fn checked_band(a: &Face, b: &Face) -> Result<bool, work::Exhausted> {
+    work::spend(a.t.len())?;
+    Ok(in_band_of(a, b))
 }
 
 /// The guard over one host: [`Guard::refuses`] is the rule in the module docs.
@@ -135,47 +144,57 @@ impl<'a> Guard<'a> {
     /// each vertex adjacency list expands once, including at high-valence
     /// vertices. Face band tests run at most once per encountered face,
     /// each against at most `1 + left.len()` planes.
-    fn joined(&mut self, target: usize, left: &[usize]) -> bool {
+    fn joined(&mut self, target: usize, left: &[usize]) -> Result<bool, work::Exhausted> {
         #[cfg(test)]
         { self.adjacency_entries = 0; }
         let faces = self.faces;
-        let at = self.at.get_or_insert_with(|| {
+        if self.at.is_none() {
             let mut at: FxHashMap<Key, Vec<usize>> = FxHashMap::default();
             for (i, h) in faces.iter().enumerate() {
-                h.t.iter()
-                    .for_each(|p| at.entry(key(p)).or_default().push(i));
+                for p in &h.t {
+                    work::spend(1)?;
+                    at.entry(key(p)).or_default().push(i);
+                }
             }
-            at
-        });
-        let near = |h: usize| {
-            in_band_of(&faces[h], &faces[target])
-                || left.iter().any(|&g| in_band_of(&faces[h], &faces[g]))
+            self.at = Some(at);
+        }
+        let at = self.at.as_ref().expect("complete adjacency index");
+        let mut left_set = FxHashSet::default();
+        for &g in left { work::spend(1)?; left_set.insert(g); }
+        let near = |h: usize| -> Result<bool, work::Exhausted> {
+            if checked_band(&faces[h], &faces[target])? { return Ok(true); }
+            for &g in left {
+                if checked_band(&faces[h], &faces[g])? { return Ok(true); }
+            }
+            Ok(false)
         };
         let mut seen: FxHashSet<usize> = [target].into_iter().collect();
         let mut expanded_vertices: FxHashSet<Key> = FxHashSet::default();
         let mut stack = vec![target];
         while let Some(a) = stack.pop() {
             for p in &faces[a].t {
+                work::spend(1)?;
                 let k = key(p);
                 if !expanded_vertices.insert(k) {
                     continue;
                 }
                 for &b in at.get(&k).map_or(&[][..], Vec::as_slice) {
+                    work::spend(1)?;
                     #[cfg(test)]
                     { self.adjacency_entries += 1; }
                     if !seen.insert(b) {
                         continue;
                     }
-                    if left.contains(&b) {
-                        return true;
+                    if left_set.contains(&b) {
+                        return Ok(true);
                     }
-                    if near(b) {
+                    if near(b)? {
                         stack.push(b);
                     }
                 }
             }
         }
-        false
+        Ok(false)
     }
 
     /// Would welding a vertex to `w`, on face `target`'s plane, take it off a
@@ -185,25 +204,27 @@ impl<'a> Guard<'a> {
     /// One facet of `target`'s own surface among the coinciding faces the weld
     /// would leave withdraws the refusal: the vertex then sits on a creased
     /// face, the case this guard does not decide.
-    pub(super) fn refuses(&mut self, w: &[f64; 3], target: usize, on: &[usize]) -> bool {
+    pub(super) fn refuses(&mut self, w: &[f64; 3], target: usize, on: &[usize]) -> Result<bool, work::Exhausted> {
         let faces = self.faces;
-        let left: Vec<usize> = on
-            .iter()
-            .copied()
-            .filter(|&g| faces[g].raw_offset(w) != 0.0 && coincide(&faces[target], &faces[g]))
-            .collect();
-        if left.is_empty() {
-            return false; // the weld leaves no face it coincides with
+        let mut left = Vec::new();
+        for &g in on {
+            work::spend(1)?;
+            if faces[g].raw_offset(w) != 0.0 && checked_band(&faces[target], &faces[g])?
+                && checked_band(&faces[g], &faces[target])? { left.push(g); }
         }
+        if left.is_empty() {
+            return Ok(false); // the weld leaves no face it coincides with
+        }
+        work::spend(left.len())?; // bound the cached question comparison too
         if self
             .last
             .as_ref()
             .is_none_or(|(t, l, _)| *t != target || *l != left)
         {
-            let joined = self.joined(target, &left);
+            let joined = self.joined(target, &left)?;
             self.last = Some((target, left, joined));
         }
-        self.last.as_ref().is_some_and(|(_, _, joined)| !joined)
+        Ok(self.last.as_ref().is_some_and(|(_, _, joined)| !joined))
     }
 }
 

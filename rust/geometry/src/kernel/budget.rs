@@ -3,6 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 //! Deterministic per-boolean exact-predicate budget (issue #1109).
+//! Incidence traversal has a separate work allowance in `incidence_work`;
+//! its trip shares whole-boolean rejection, not exact-escalation telemetry.
 //!
 //! Every predicate over an implicit (intersection) point runs a cascade:
 //! `interval filter → fixed-width exact → BigRational` (`predicates.rs`). The
@@ -34,6 +36,8 @@
 //! returns the host un-cut, which routes void subtraction to the deterministic
 //! #635 AABB box-cut fallback ("a square hole is dramatically less wrong than a
 //! missing void").
+
+pub(crate) mod incidence_work;
 
 use std::cell::Cell;
 use std::marker::PhantomData;
@@ -175,6 +179,7 @@ pub fn element_cap() -> Option<u64> {
 /// the cap. Call once at every public boolean entry in [`crate::csg`].
 #[inline]
 pub fn begin() {
+    incidence_work::begin();
     crate::progress::tick();
     // Fold the just-finished op's count into the global peak (calibration).
     let prev = COUNT.with(|c| c.get());
@@ -202,6 +207,7 @@ pub fn begin() {
 /// the configured [`ELEMENT_CAP`] (or its `IFC_LITE_CSG_ELEMENT_BUDGET` override).
 #[inline]
 pub fn begin_element() {
+    incidence_work::begin_element();
     // Fold the just-finished element's total into the per-element peak.
     let prev = ELEM_COUNT.with(|c| c.get());
     if prev != 0 {
@@ -244,6 +250,7 @@ pub fn begin_element() {
 /// ```
 #[must_use = "dropping the scope immediately restores the enclosing element's budget"]
 pub struct ElementScope {
+    incidence: incidence_work::Snapshot,
     count: u64,
     op_cap: u64,
     elem_count: u64,
@@ -258,6 +265,7 @@ pub struct ElementScope {
 /// [`begin_element`], wherever element meshing can be re-entered on one thread.
 pub fn enter_element() -> ElementScope {
     let scope = ElementScope {
+        incidence: incidence_work::snapshot(),
         count: COUNT.with(Cell::get),
         op_cap: OP_CAP.with(Cell::get),
         elem_count: ELEM_COUNT.with(Cell::get),
@@ -270,6 +278,7 @@ pub fn enter_element() -> ElementScope {
 
 impl Drop for ElementScope {
     fn drop(&mut self) {
+        incidence_work::restore(self.incidence);
         // Fold the scope's last boolean and its element total into the peaks
         // before the restore overwrites them (`begin` / `begin_element` fold a
         // finished count only when the next one starts on this thread).
@@ -347,7 +356,7 @@ pub fn note_escalation() {
 /// not), so the element's remaining cuts bail to the #635 AABB fallback.
 #[inline]
 pub fn tripped() -> bool {
-    COUNT.with(|c| c.get()) >= OP_CAP.with(|c| c.get())
+    incidence_work::tripped() || COUNT.with(|c| c.get()) >= OP_CAP.with(|c| c.get())
         || ELEM_COUNT.with(|c| c.get()) >= ELEM_CAP.with(|c| c.get())
 }
 
@@ -367,10 +376,11 @@ pub fn element_count() -> u64 {
 
 /// Snapshot / restore the accumulators so a REFERENCE computation (`subtract_many`'s
 /// volume-safe oracle) can't charge or trip the caller's #1109 batch budget (codex P2).
-pub(crate) fn snapshot_counters() -> (u64, u64) {
-    (COUNT.with(|c| c.get()), ELEM_COUNT.with(|c| c.get()))
+pub(crate) fn snapshot_counters() -> (u64, u64, incidence_work::Snapshot) {
+    (COUNT.with(|c| c.get()), ELEM_COUNT.with(|c| c.get()), incidence_work::snapshot())
 }
-pub(crate) fn restore_counters((op, elem): (u64, u64)) {
+pub(crate) fn restore_counters((op, elem, incidence): (u64, u64, incidence_work::Snapshot)) {
+    incidence_work::restore(incidence);
     COUNT.with(|c| c.set(op));
     ELEM_COUNT.with(|c| c.set(elem));
 }

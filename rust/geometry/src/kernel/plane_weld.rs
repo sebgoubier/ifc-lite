@@ -320,8 +320,12 @@ fn promote<const KEEP_INCIDENCE: bool>(cutter: &mut [Tri], host: &[Tri]) -> usiz
             // that sees it.
             if let Some((_, f)) = best {
                 if let Some(w) = exact_on_plane_weld(*v, faces[f].t) {
-                    if KEEP_INCIDENCE && guard.refuses(&w, f, &on) {
-                        continue; // #6940
+                    if KEEP_INCIDENCE {
+                        match guard.refuses(&w, f, &on) {
+                            Ok(true) => continue, // #6940
+                            Ok(false) => {}
+                            Err(_) => return welded, // whole boolean rejects on budget trip
+                        }
                     }
                     if w != *v {
                         welded += 1;

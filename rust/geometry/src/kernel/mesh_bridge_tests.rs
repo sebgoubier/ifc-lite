@@ -886,3 +886,34 @@ fn issue_7024_public_batch_subtract_retains_boolean_operand_weld() {
     assert_eq!(payload(subtract_many(&host, &[&cutter])), plain);
     assert_eq!(payload(subtract_many_with_conformity(&host, &[&cutter], true, false).0), opening);
 }
+
+
+/// #7024: incidence exhaustion is a whole-operation rejection, never a
+/// successful cut of partially welded operands. Genuine hole-wall fixture.
+#[test]
+fn incidence_work_exhaustion_rejects_single_and_batch_atomically_7024() {
+    use crate::{extrude_profile, Point2, Profile2D};
+    use crate::csg::{ClippingProcessor, GroupCut, GroupReject};
+    use crate::kernel::budget::{self, incidence_work};
+    let pt = |x, y| Point2::new(x, y);
+    let mut profile = Profile2D::new(vec![pt(0., 0.), pt(8., 0.), pt(8., 8.), pt(0., 8.)]);
+    profile.add_hole(vec![pt(1., 1.), pt(1., 2.), pt(2., 2.), pt(2., 1.)]);
+    profile.add_hole(vec![pt(1., 3.), pt(1. + 2. * SNAP_GRID, 5.), pt(2., 5.), pt(2., 3.)]);
+    let host = extrude_profile(&profile, 0.25, None).unwrap();
+    let cutter_profile = Profile2D::new(vec![pt(1., 1.), pt(2., 1.), pt(2., 2.), pt(1., 2.)]);
+    let mut cutter = extrude_profile(&cutter_profile, 0.45, None).unwrap();
+    for p in cutter.positions.chunks_exact_mut(3) { p[2] -= 0.1; }
+    let original = (host.positions.clone(), host.indices.clone(), cutter.positions.clone(), cutter.indices.clone());
+    incidence_work::with_limit(0, || {
+        let clipper = ClippingProcessor::new();
+        assert!(matches!(clipper.subtract_mesh(&host, &cutter), GroupCut::Rejected(GroupReject::BudgetTripped)));
+        assert!(budget::tripped());
+        assert!(matches!(clipper.subtract_mesh_many(&host, &[&cutter]), GroupCut::Rejected(GroupReject::BudgetTripped)));
+        assert_eq!((host.positions.clone(), host.indices.clone(), cutter.positions.clone(), cutter.indices.clone()), original);
+    });
+    incidence_work::with_limit(incidence_work::OP_LIMIT, || {
+        let clipper = ClippingProcessor::new();
+        assert!(!matches!(clipper.subtract_mesh(&host, &cutter), GroupCut::Rejected(GroupReject::BudgetTripped)),
+            "the actual fixture must complete under normal allowance");
+    });
+}

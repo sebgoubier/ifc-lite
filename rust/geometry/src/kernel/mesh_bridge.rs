@@ -183,10 +183,12 @@ pub fn subtract(host: &Mesh, cutter: &Mesh) -> Mesh {
 pub(crate) fn subtract_with_change(host: &Mesh, cutter: &Mesh, opening: bool) -> (Mesh, bool, bool) {
     #[cfg(feature = "csg_capture")]
     crate::csg_capture::record_single(host, cutter, opening);
+    if super::budget::tripped() { return (Mesh::new(), false, false); }
     let h = orient_outward(mesh_to_tris(host));
     let mut c = mesh_to_tris(cutter);
     let weld = if opening { promote_subtract_cutter_onto_host_faces } else { promote_cutter_verts_onto_host_faces };
     weld(&mut c, &h);
+    if super::budget::tripped() { return (Mesh::new(), false, false); }
     let c = orient_outward(c);
     let (tris, changed, conforming) = difference_all_lenient_with_conformity(&h, &[&c]);
     (tris_to_mesh_without_plane_tags(&tris), changed, conforming)
@@ -224,19 +226,19 @@ pub(crate) fn subtract_many_with_conformity(
 ) -> (BatchSubtract, bool, Option<Mesh>) {
     #[cfg(feature = "csg_capture")]
     crate::csg_capture::record_many(host, cutters, opening, retain_conforming_miss);
+    if super::budget::tripped() { return (BatchSubtract::Nonconforming, false, None); }
     let h = orient_outward(mesh_to_tris(host));
-    let comp_tris: Vec<Vec<Tri>> = cutters
-        .iter()
-        .map(|m| {
-            let mut c = mesh_to_tris(m);
-            if opening {
-                promote_subtract_cutter_onto_host_faces(&mut c, &h);
-            } else {
-                promote_cutter_verts_onto_host_faces(&mut c, &h);
-            }
-            orient_outward(c)
-        })
-        .collect();
+    let mut comp_tris: Vec<Vec<Tri>> = Vec::with_capacity(cutters.len());
+    for m in cutters {
+        let mut c = mesh_to_tris(m);
+        if opening {
+            promote_subtract_cutter_onto_host_faces(&mut c, &h);
+        } else {
+            promote_cutter_verts_onto_host_faces(&mut c, &h);
+        }
+        if super::budget::tripped() { return (BatchSubtract::Nonconforming, false, None); }
+        comp_tris.push(orient_outward(c));
+    }
     let refs: Vec<&[Tri]> = comp_tris.iter().map(|c| c.as_slice()).collect();
     // Conforming batch: the fast, exact, byte-identical common path.
     if let Some((r, changed)) = difference_all(&h, &refs) {

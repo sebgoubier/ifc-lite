@@ -28,7 +28,7 @@ fn faces(tris: &[Tri]) -> Vec<Face> {
 /// Would the weld of a vertex exactly on the faces `on` to `w`, on
 /// `tris[target]`'s plane, be refused against the host `tris`?
 fn refused(tris: &[Tri], w: &[f64; 3], target: usize, on: &[usize]) -> bool {
-    Guard::new(&faces(tris)).refuses(w, target, on)
+    Guard::new(&faces(tris)).refuses(w, target, on).expect("normal guard work")
 }
 
 /// `g`: a wall in the plane `y = 0`. The vertex `v` is exactly on it.
@@ -137,9 +137,9 @@ fn one_guard_answers_each_question_on_its_own() {
     let hinge: Tri = [[3.0, -G, 0.0], [3.0, -G, 1.0], V];
     let f = faces(&[WALL, CROSSING, hinge]);
     let mut guard = Guard::new(&f);
-    assert!(guard.refuses(&OFF, 1, &[0]));
-    assert!(!guard.refuses(&OFF, 1, &[0, 2]));
-    assert!(guard.refuses(&OFF, 1, &[0]));
+    assert!(guard.refuses(&OFF, 1, &[0]).expect("normal guard work"));
+    assert!(!guard.refuses(&OFF, 1, &[0, 2]).expect("normal guard work"));
+    assert!(guard.refuses(&OFF, 1, &[0]).expect("normal guard work"));
 }
 
 #[test]
@@ -354,9 +354,55 @@ fn high_valence_joined_walk_expands_each_vertex_adjacency_once_7024() {
         let f = faces(&host);
         let mut guard = Guard::new(&f);
         for _ in 0..2 {
-            assert!(!guard.joined(0, &[count]));
+            assert!(!guard.joined(0, &[count]).expect("normal star work"));
             assert_eq!(guard.adjacency_entries, 3 * count,
                 "each face contributes three adjacency entries, read once per call");
         }
     }
+}
+
+
+/// #7024: many disconnected coincident planes must not multiply unbounded
+/// band checks at each bordering face. This exercises real face predicates.
+#[test]
+fn incidence_large_left_stops_without_answer_or_cache_7024() {
+    use crate::kernel::budget::{self, incidence_work};
+    let mut host = vec![WALL];
+    for i in 0..64 {
+        host.push([[0., 0., 0.], [1., 1., 1. + i as f64], [2., 1., 1. + i as f64]]);
+    }
+    let left: Vec<usize> = (0..64).map(|i| {
+        host.push([[100. + i as f64, 0., 0.], [101. + i as f64, 0., 0.],
+            [100. + i as f64, 0., 1.]]);
+        host.len() - 1
+    }).collect();
+    let f = faces(&host);
+    let mut guard = Guard::new(&f);
+    incidence_work::with_limit(1024, || {
+        budget::begin();
+        assert!(guard.joined(0, &left).is_err(), "actual many-plane work must exhaust");
+        assert!(budget::tripped());
+        assert!(guard.last.is_none(), "unfinished search cannot cache a geometric answer");
+    });
+    incidence_work::with_limit(incidence_work::OP_LIMIT, || {
+        budget::begin();
+        assert!(!guard.joined(0, &left).expect("finite ordinary search"));
+    });
+}
+
+#[test]
+fn incidence_budget_abort_does_not_cache_a_refusal_7024() {
+    use crate::kernel::budget::{self, incidence_work};
+    let f = faces(&[WALL, CROSSING]);
+    let mut guard = Guard::new(&f);
+    incidence_work::with_limit(0, || {
+        budget::begin();
+        assert!(guard.refuses(&OFF, 1, &[0]).is_err());
+        assert!(guard.last.is_none());
+        assert!(budget::tripped());
+    });
+    incidence_work::with_limit(incidence_work::OP_LIMIT, || {
+        budget::begin();
+        assert!(guard.refuses(&OFF, 1, &[0]).expect("same geometry completes"));
+    });
 }
