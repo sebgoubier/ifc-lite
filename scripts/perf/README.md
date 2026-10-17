@@ -2169,6 +2169,15 @@ Orientation reuses deterministic edge adjacency, triangle filters compact their 
   Track raw AND brotli, and gate on brotli (what the user downloads).
 - **`bnum` fixed-width bigint** (bnum#74): OBSOLETE post-FixedInt; the -8.9% it once
   bought is now ~0%. Another regime-rot casualty.
+- **Canonical `FixedInt<4>` reuse in opening certificates** (#6940): REJECTED.
+  Trial `08e8cc926` replaced only the upper facet-eligibility and closure-certificate
+  `bnum::I256` arithmetic. Source review preserved exact predicates and checked
+  accumulation, but the official build's Brotli output grew against `9670e0e8b`
+  and still failed the unchanged engine ceiling. The produced WASM SHA256 was
+  `a4b45ec1f829bca1b79866051e13d719d4453ce78f96b51634885f671ed7b841`.
+  Consumers and end-to-end worker-pool measurement were not run; no performance
+  win is claimed. The original source's size failure remains. Reusing an existing
+  arithmetic type is not proof of smaller compressed shipping code.
 - **Component parity BVH filtering** (#4054, PR #4060): conservative per-component BVH
   filtering of the exact parity candidate scan, query endpoint and predicates unchanged.
   A one-pair fresh-process Chrome screen over 27 fixtures established NO corpus cold-load
