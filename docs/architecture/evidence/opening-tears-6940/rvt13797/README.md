@@ -44,3 +44,5 @@ disproves exact3D equivalence. No old failure is substituted for a passing run.
 Read the two bounded-acceptance verdicts inside `work/6940/rvt-causal/` first.
 CI, new-source provenance, other changed census rows and end-to-end performance
 remain independent requirements. Nothing in this pack changes their gates.
+
+Current pinned-main follow-up: [parent26f538 versus cap5933 evidence](current-main-5933/README.md) preserves the authentic current pair, original failure, invalid stale-cache export and bounded one-row adjudication separately from this historical packet.
