@@ -20,29 +20,6 @@ use std::collections::BTreeMap;
 const HOST: u32 = 135923;
 const GRID: f64 = 1.0 / 65536.0;
 
-fn fixture() -> Option<Vec<u8>> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/models/georeferencer/MiniBIM-3.1-DO_01_VORM.ifc");
-    let required = match std::env::var("IFC_LITE_REQUIRE_FIXTURES") {
-        Err(std::env::VarError::NotPresent) => false,
-        Ok(v) if v.is_empty() || v == "0" => false,
-        Ok(v) if v == "1" => true,
-        other => panic!("invalid IFC_LITE_REQUIRE_FIXTURES: {other:?}"),
-    };
-    match std::fs::read(&path) {
-        Ok(bytes) => Some(bytes),
-        Err(e) => {
-            assert!(
-                !required,
-                "required fixture {} missing: {e}",
-                path.display()
-            );
-            eprintln!("SKIP {} missing; run pnpm fixtures", path.display());
-            None
-        }
-    }
-}
-
 fn closed_volume(meshes: &[Mesh], frame: &str) -> (f64, f64, f64, f64, usize) {
     let mut uses = BTreeMap::<([i64; 3], [i64; 3]), (usize, usize)>::new();
     let (mut volume, mut area, mut magnitude) = (0.0, 0.0, 0.0_f64);
@@ -104,7 +81,9 @@ fn closed_volume(meshes: &[Mesh], frame: &str) -> (f64, f64, f64, f64, usize) {
 
 #[test]
 fn issue_6940_source_cap_and_redundant_openings_close_in_all_frames() {
-    let Some(bytes) = fixture() else { return };
+    let Some(bytes) = ifc_lite_testkit::fixture_bytes(
+        "georeferencer/MiniBIM-3.1-DO_01_VORM.ifc",
+    ) else { return };
     let index = std::sync::Arc::new(build_entity_index(&bytes));
     let mut decoder = EntityDecoder::with_arc_index(&bytes, index.clone());
     let units = GeometryRouter::with_units(&bytes, &mut decoder);
