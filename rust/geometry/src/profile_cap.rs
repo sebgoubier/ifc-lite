@@ -14,7 +14,7 @@
 //! A deficit only triggers inspection: actual missing boundaries, a valid
 //! ring domain, and a complete oriented CDT are required before adoption.
 
-use crate::geom2d::{on_segment, orientation, segments_intersect};
+use crate::math::geom2d::{on_segment, orientation, segments_intersect};
 use nalgebra::Point2;
 use rustc_hash::{FxHashMap, FxHashSet};
 
