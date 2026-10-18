@@ -1,0 +1,58 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+name: Issue 6729 comparison previews
+
+# Isolated, explicitly requested preview deployment. Does not move production.
+on:
+  push:
+    branches: [t3/6729-vercel-previews]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-6729-comparison-previews
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: before
+            source: 9ffcc10e80f75b0645ba622e042961cd23bbc42e
+          - version: fixed
+            source: 6cdfb4836d82bd8fde3f1825e2a82f63a7abfe8d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.source }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Deploy the pinned preview through the existing viewer project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          SOURCE_SHA: ${{ matrix.source }}
+          COMPARISON_VERSION: ${{ matrix.version }}
+          VERCEL_TELEMETRY_DISABLED: '1'
+        run: |
+          test -n "$VERCEL_TOKEN"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          pnpm dlx vercel@64.5.0 link --yes --project ifc-lite --scope ltplus --token "$VERCEL_TOKEN"
+          pnpm dlx vercel@64.5.0 deploy --yes --target=preview --force --archive=tgz --scope ltplus --token "$VERCEL_TOKEN" \
+            --meta comparison=6729 --meta comparisonVersion="$COMPARISON_VERSION" --meta sourceSHA="$SOURCE_SHA" > preview-url.txt
+          cat preview-url.txt
+          printf '### %s preview\nSource: `%s`\n\n' "$COMPARISON_VERSION" "$SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          cat preview-url.txt >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: preview-url-${{ matrix.version }}
+          path: preview-url.txt
+          if-no-files-found: error
