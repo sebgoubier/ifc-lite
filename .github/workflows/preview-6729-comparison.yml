@@ -23,10 +23,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - version: before
-            source: 9ffcc10e80f75b0645ba622e042961cd23bbc42e
           - version: fixed
-            source: 6cdfb4836d82bd8fde3f1825e2a82f63a7abfe8d
+            source: 3da00a2adb815dd7d315a3c6da1012e1959477de
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
