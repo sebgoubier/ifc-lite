@@ -63,6 +63,18 @@ items are not all plain `#n` references is refused whole (`ref_list_at`), and
 `extract_first_entity_ref`, `extract_entity_refs_from_list` and
 `EntityDecoder::get_first_entity_ref_fast` are removed in favour of it.
 
+`ifc_lite_core::parser::is_step_value(text)` and `parser::split_step_slots(inner)` are the
+strict reads for STEP WRITERS: whether text is exactly one well-formed value
+(the grammar the tokenizer reads: no bare keyword, no `1..2`, no empty list
+element, a binary is `[0-3]` plus hex, STEP whitespace only), and an argument
+list cut into untrimmed slots that rejoin byte for byte, or `None` when a
+by-index edit cannot trust it. The export crate's `step_slot` is a thin
+wrapper over them.
+
+`ifc_lite_core::optional_text(Option<&str>)` is the one "no value" rule for a decoded
+name or label: trimmed of STEP whitespace, and an empty result or a bare `$` is
+`None`. `get_string()` is already decoded, so never call `decode_ifc_string` on it.
+
 #### Token
 
 ```rust
@@ -747,6 +759,12 @@ use ifc_lite_processing::{process, Batching, ProcessingRequest, TessellationQual
 let request = ProcessingRequest::full_pass().quality(TessellationQuality::High);
 let result = process(&bytes, &request, &mut ());
 ```
+
+`ifc_lite_processing::scan::ScanClass::classify(keyword)` is the one table of STEP
+keywords a scan loop reacts to (styled items, relationships, project / site /
+building, mapped items, property records, ...). The native scan, `PrepassSpans::stash`
+and the sharded scan's `classify_type_name` all match on it; `u8::from(class)`
+is the shard wire code.
 
 `process_geometry(content)` stays as the convenience for the default full pass.
 The other ten `process_geometry_*` functions are `#[deprecated]` delegates onto

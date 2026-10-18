@@ -62,20 +62,30 @@ test('#7306 identical source ids in two models retain model-local current placem
  const active=buildStoreyWorkplane(useViewerStore.getState(),SAMPLE_MODEL,f.storey,0),other=buildStoreyWorkplane(useViewerStore.getState(),'other',f.storey,0);assert.ok(isWorkplane(active));assert.ok(isWorkplane(other));assert.deepEqual(active.localToRender([1,2,0]),[13,5,-21]);
  const legacy=other.localToRender([1,2,0]);for(let i=0;i<3;i++)assert.ok(Math.abs(legacy[i]-[4,0,-5][i])<1e-9,'Other native model retains original source frame');
 });
-test('#7306/#7825 over-256 acyclic live placement walk composes the complete saved frame',async()=>{
- const f=await editedFrame(),editor=new StoreEditor(f.source,f.view);let parent:number|null=null;
- for(let i=0;i<257;i++)parent=editor.addEntity('IfcLocalPlacement',[parent===null?null:`#${parent}`,`#${f.axis}`]).expressId;
- assert.ok(parent);editor.setPositionalAttribute(f.storey,5,`#${parent}`);
- // #7825 removed depth caps: an iterative visited walk accepts any acyclic
- // chain. 257 quarter-turns retain one turn; truncating to 256 yields identity.
- const independent=await parseIfc(editedModelBytes(f.source,f.view)),saved=storeyPlanFrame(independent,f.storey);
- assert.ok(saved);assert.deepEqual(saved.origin,[15,20]);assert.deepEqual(saved.axisX,[0,1]);
- const state=useViewerStore.getState(),model=state.models.get(SAMPLE_MODEL)!;
- const plane=buildStoreyWorkplane(state,SAMPLE_MODEL,f.storey,0);
- const savedPlane=buildStoreyWorkplane({...state,models:new Map([[SAMPLE_MODEL,{...model,ifcDataStore:independent}]]),mutationViews:new Map()},SAMPLE_MODEL,f.storey,0);
- assert.ok(isWorkplane(plane));assert.ok(isWorkplane(savedPlane));
- assert.deepEqual(plane.localToRender([1,2,0]),[13,5,-21],'The complete 257-link chain must not be truncated to the identity frame');
- assert.deepEqual(plane.localToRender([1,2,0]),savedPlane.localToRender([1,2,0]),'Current and independently saved full placement chains agree');
+async function editedDeepPlacementFrame(cyclic=false) {
+ const f=await editedFrame(),editor=new StoreEditor(f.source,f.view);
+ const point=editor.addEntity('IfcCartesianPoint',[[0,0,0]]),vertical=editor.addEntity('IfcDirection',[[0,0,1]]),x=editor.addEntity('IfcDirection',[[1,0,0]]);
+ const identityAxis=editor.addEntity('IfcAxis2Placement3D',[`#${point.expressId}`,`#${vertical.expressId}`,`#${x.expressId}`]);
+ // #7791/#7306: the shared placement walk is iterative and cycle-guarded; a legal chain has no arbitrary depth cap.
+ const root=editor.addEntity('IfcLocalPlacement',[null,`#${f.axis}`]).expressId;let leaf=root;
+ for(let i=0;i<256;i++)leaf=editor.addEntity('IfcLocalPlacement',[`#${leaf}`,`#${identityAxis.expressId}`]).expressId;
+ editor.setPositionalAttribute(f.storey,5,`#${leaf}`);
+ if(cyclic)editor.setPositionalAttribute(root,0,`#${leaf}`);
+ const independent=await parseIfc(editedModelBytes(f.source,f.view));
+ return {f,independent};
+}
+
+test('#7306 current frame preserves a valid 257-link placement chain',async()=>{
+ const {f,independent}=await editedDeepPlacementFrame();
+ const savedFrame=storeyPlanFrame(independent,f.storey);assert.ok(savedFrame);assert.deepEqual(savedFrame.origin,[15,20]);assert.deepEqual(savedFrame.axisX,[0,1]);
+ const plane=buildStoreyWorkplane(useViewerStore.getState(),SAMPLE_MODEL,f.storey,0);assert.ok(isWorkplane(plane));
+ assert.deepEqual(plane.localToRender([1,2,0]),[13,5,-21],'All 257 links resolve to the independently saved frame');
+});
+
+test('#7306 current and independently saved frames refuse a deep placement cycle',async()=>{
+ const {f,independent}=await editedDeepPlacementFrame(true);
+ assert.equal(storeyPlanFrame(independent,f.storey),null,'Independent STEP reparse confirms the cycle is unreadable');
+ const plane=buildStoreyWorkplane(useViewerStore.getState(),SAMPLE_MODEL,f.storey,0);assert.equal(isWorkplane(plane),false);assert.ok('refused' in plane);assert.match(plane.refused,/cyclic/,'The actual workplane refusal describes the detected cycle rather than a removed depth cap');
 });
 
 test('#7306 current frame reads preserve a held native preparation lease and follow Undo/Redo',async()=>{
